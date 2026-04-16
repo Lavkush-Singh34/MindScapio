@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+/* Layout Styles */
+.layout {
+  @apply flex h-screen overflow-hidden;
+}
+
+.layout-main {
+  @apply flex flex-1 flex-col overflow-hidden;
+}
+
+.layout-content {
+  @apply flex-1 overflow-y-auto px-4 py-6 sm:px-6 md:px-8;
+}
+
+/* Container Utilities */
+.container-sm {
+  @apply max-w-2xl mx-auto;
+}
+
+.container-md {
+  @apply max-w-4xl mx-auto;
+}
+
+.container-lg {
+  @apply max-w-6xl mx-auto;
+}
+
+/* Scroll Styles */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(107, 129, 255, 0.3);
+  border-radius: 4px;
+  transition: background 0.2s;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 129, 255, 0.5);
+}
+
+/* Dark mode scrollbar */
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(107, 129, 255, 0.2);
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(107, 129, 255, 0.4);
+}
+
+/* Focus rings (FIXED) */
+button:focus-visible,
+a:focus-visible,
+input:focus-visible {
+  @apply outline-none ring-2 ring-primary-500 ring-offset-2 ring-offset-white dark:ring-offset-neutral-900;
+}
