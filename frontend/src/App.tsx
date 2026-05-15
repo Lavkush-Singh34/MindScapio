@@ -1,15 +1,13 @@
-import './App.css'
-import { Outlet } from 'react-router-dom'
+import AppRoutes from "./routes/AppRoutes";
+import Navbar from "./components/layout/Navbar";
 
 const App = () => {
-
   return (
-    <div className="min-h-screen bg-gray-100">
-      <Header />
-      <main className="flex-grow">
-        <Outlet />
+    <div className="min-h-screen bg-gray-50">
+      <Navbar />
+      <main>
+        <AppRoutes />
       </main>
-      <Footer />
     </div>
   );
 };

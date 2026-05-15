@@ -5,7 +5,7 @@ import authRoutes from "./routes/auth.routes";
 // import session from "express-session";
 import { session } from "passport";
 import classRoutes from "./routes/class.routes";
-
+import quizRoutes from "./routes/quiz.routes";
 
 const app: Application = express();
 
@@ -42,9 +42,21 @@ app.get("/api/health", (req: Request, res: Response) => {
 // ─── API Routes (uncomment as we build) ───────────────────────
 app.use("/api/auth", authRoutes);
 app.use("/api/classes", classRoutes);
+app.use("/api/quizzes", quizRoutes);
 // app.use("/api/notes", notesRoutes);
 // app.use("/api/students", studentRoutes);
 // app.use("/api/tests", testRoutes);
+
+// app.use("/api/auth", authRoutes);
+// app.use("/api/classes", classRoutes);
+// app.use("/api/subjects", subjectRoutes);
+// app.use("/api/chapters", chapterRoutes);
+// app.use("/api/notes", noteRoutes);
+// app.use("/api/quizzes", quizRoutes);
+// app.use("/api/questions", questionRoutes);
+// app.use("/api/flashcards", flashcardRoutes);
+// app.use("/api/test-results", testResultRoutes);
+// app.use("/api/assignments", assignmentRoutes);
 
 import { errorHandler } from "./middleware/error.middleware";
 
