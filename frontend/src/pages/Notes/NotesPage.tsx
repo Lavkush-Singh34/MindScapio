@@ -1,427 +1,444 @@
-// src/pages/Notes/NotesPage.tsx
-// Step 50 — Class → Subject → Chapter drill-down with Markdown note renderer
-
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
+import api from "../../services/api";
+import type { IClass, ISubject, IChapter, INote } from "../../types";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { useAuth } from "../../context/AuthContext";
-import api from "../../services/api";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
+// ─── Install these if not already ─────────────────────────────
+// pnpm add react-markdown remark-gfm
 
-interface Class {
-  _id: string;
-  name: string;   // e.g. "Class 6"
-  order: number;
-}
+// ─── Breadcrumb ────────────────────────────────────────────────
+const Breadcrumb = ({
+  items,
+}: {
+  items: { label: string; onClick?: () => void }[];
+}) => (
+  <div className="flex items-center gap-2 text-sm text-gray-500 mb-6 flex-wrap">
+    {items.map((item, index) => (
+      <span key={index} className="flex items-center gap-2">
+        {index > 0 && <span className="text-gray-300">›</span>}
+        {item.onClick ? (
+          <button
+            onClick={item.onClick}
+            className="hover:text-indigo-600 transition-colors"
+          >
+            {item.label}
+          </button>
+        ) : (
+          <span className="text-gray-800 font-medium">{item.label}</span>
+        )}
+      </span>
+    ))}
+  </div>
+);
 
-interface Subject {
-  _id: string;
-  name: string;
-  icon?: string;  // emoji or icon string stored in DB
-  slug: string;
-  classId: string;
-}
+// ─── Skeleton Loader ───────────────────────────────────────────
+const SkeletonCard = () => (
+  <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 animate-pulse">
+    <div className="h-4 bg-gray-200 rounded w-3/4 mb-3" />
+    <div className="h-3 bg-gray-100 rounded w-1/2" />
+  </div>
+);
 
-interface Chapter {
-  _id: string;
-  title: string;
-  order: number;
-  isPublished: boolean;
-  subjectId: string;
-}
+// ─── Notes Page ────────────────────────────────────────────────
+const NotesPage = () => {
+  const [searchParams, setSearchParams] = useSearchParams();
 
-interface Note {
-  _id: string;
-  content: string;  // raw Markdown string
-  isPublished: boolean;
-  chapterId: string;
-}
+  // ── Drill-down state ───────────────────────────────────────
+  const [classes, setClasses] = useState<IClass[]>([]);
+  const [subjects, setSubjects] = useState<ISubject[]>([]);
+  const [chapters, setChapters] = useState<IChapter[]>([]);
+  const [notes, setNotes] = useState<INote[]>([]);
+  const [selectedNote, setSelectedNote] = useState<INote | null>(null);
 
-// ─── Component ────────────────────────────────────────────────────────────────
+  // ── Selected IDs from URL params ───────────────────────────
+  const selectedClassId = searchParams.get("classId");
+  const selectedSubjectId = searchParams.get("subjectId");
+  const selectedChapterId = searchParams.get("chapterId");
+  const selectedNoteId = searchParams.get("noteId");
 
-export default function NotesPage() {
-  const { user } = useAuth();
-  const isAdmin = user?.role === "admin" || user?.role === "teacher";
-
-  // ── Selection state ─────────────────────────────────────────────────────────
-  const [selectedClass, setSelectedClass] = useState<Class | null>(null);
-  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null);
-  const [selectedChapter, setSelectedChapter] = useState<Chapter | null>(null);
-
-  // ── Data state ───────────────────────────────────────────────────────────────
-  const [classes, setClasses] = useState<Class[]>([]);
-  const [subjects, setSubjects] = useState<Subject[]>([]);
-  const [chapters, setChapters] = useState<Chapter[]>([]);
-  const [note, setNote] = useState<Note | null>(null);
-
-  // ── Loading / error state ────────────────────────────────────────────────────
+  // ── Loading states ─────────────────────────────────────────
   const [loadingClasses, setLoadingClasses] = useState(true);
   const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [loadingChapters, setLoadingChapters] = useState(false);
+  const [loadingNotes, setLoadingNotes] = useState(false);
   const [loadingNote, setLoadingNote] = useState(false);
-  const [noteError, setNoteError] = useState<string | null>(null);
 
-  // ── 1. Fetch all classes on mount ─────────────────────────────────────────
+  // ── Selected objects for breadcrumb labels ─────────────────
+  const [selectedClass, setSelectedClass] = useState<IClass | null>(null);
+  const [selectedSubject, setSelectedSubject] = useState<ISubject | null>(null);
+  const [selectedChapter, setSelectedChapter] = useState<IChapter | null>(null);
+
+  // ── Fetch classes on mount ─────────────────────────────────
   useEffect(() => {
-    (async () => {
+    const fetchClasses = async () => {
       try {
-        const res = await api.get("/classes");
-        const sorted: Class[] = (res.data.data ?? []).sort(
-          (a: Class, b: Class) => a.order - b.order
-        );
-        setClasses(sorted);
-
-        // Pre-select the student's assigned class if available
-        const assignedClassId = user?.classId;
-        if (assignedClassId) {
-          const match = sorted.find((c) => c._id === assignedClassId);
-          if (match) setSelectedClass(match);
-        }
+        const { data } = await api.get("/classes");
+        setClasses(data.data);
+      } catch {
+        console.error("Failed to fetch classes");
       } finally {
         setLoadingClasses(false);
       }
-    })();
-  }, [user?.classId]);
+    };
+    fetchClasses();
+  }, []);
 
-  // ── 2. Fetch subjects when class changes ──────────────────────────────────
+  // ── Fetch subjects when class selected ────────────────────
   useEffect(() => {
-    if (!selectedClass) return;
-    setSelectedSubject(null);
-    setSelectedChapter(null);
-    setNote(null);
-    setSubjects([]);
-    setChapters([]);
-    setLoadingSubjects(true);
-
-    (async () => {
+    if (!selectedClassId) return;
+    const fetchSubjects = async () => {
+      setLoadingSubjects(true);
       try {
-        const res = await api.get(`/subjects?classId=${selectedClass._id}`);
-        setSubjects(res.data.data ?? []);
+        const { data } = await api.get(`/subjects?classId=${selectedClassId}`);
+        setSubjects(data.data);
+        const cls = classes.find((c) => c._id === selectedClassId);
+        if (cls) setSelectedClass(cls);
+      } catch {
+        console.error("Failed to fetch subjects");
       } finally {
         setLoadingSubjects(false);
       }
-    })();
-  }, [selectedClass]);
+    };
+    fetchSubjects();
+  }, [selectedClassId, classes]);
 
-  // ── 3. Fetch chapters when subject changes ────────────────────────────────
+  // ── Fetch chapters when subject selected ──────────────────
   useEffect(() => {
-    if (!selectedSubject) return;
-    setSelectedChapter(null);
-    setNote(null);
-    setChapters([]);
-    setLoadingChapters(true);
-
-    (async () => {
+    if (!selectedSubjectId) return;
+    const fetchChapters = async () => {
+      setLoadingChapters(true);
       try {
-        // Admin sees all chapters (including drafts); students see published only
-        const endpoint = isAdmin
-          ? `/chapters/admin?subjectId=${selectedSubject._id}`
-          : `/chapters?subjectId=${selectedSubject._id}`;
-        const res = await api.get(endpoint);
-        const sorted: Chapter[] = (res.data.data ?? []).sort(
-          (a: Chapter, b: Chapter) => a.order - b.order
+        const { data } = await api.get(
+          `/chapters?subjectId=${selectedSubjectId}`
         );
-        setChapters(sorted);
+        setChapters(data.data);
+        const sub = subjects.find((s) => s._id === selectedSubjectId);
+        if (sub) setSelectedSubject(sub);
+      } catch {
+        console.error("Failed to fetch chapters");
       } finally {
         setLoadingChapters(false);
       }
-    })();
-  }, [selectedSubject, isAdmin]);
+    };
+    fetchChapters();
+  }, [selectedSubjectId, subjects]);
 
-  // ── 4. Fetch note when chapter changes ────────────────────────────────────
+  // ── Fetch notes when chapter selected ─────────────────────
   useEffect(() => {
-    if (!selectedChapter) return;
-    setNote(null);
-    setNoteError(null);
-    setLoadingNote(true);
-
-    (async () => {
+    if (!selectedChapterId) return;
+    const fetchNotes = async () => {
+      setLoadingNotes(true);
       try {
-        const endpoint = isAdmin
-          ? `/notes/admin?chapterId=${selectedChapter._id}`
-          : `/notes?chapterId=${selectedChapter._id}`;
-        const res = await api.get(endpoint);
-        // API returns array; take first note for this chapter
-        const notes: Note[] = res.data.data ?? [];
-        if (notes.length === 0) {
-          setNoteError("No notes available for this chapter yet.");
-        } else {
-          setNote(notes[0]);
-        }
+        const { data } = await api.get(
+          `/notes?chapterId=${selectedChapterId}`
+        );
+        setNotes(data.data);
+        const chap = chapters.find((c) => c._id === selectedChapterId);
+        if (chap) setSelectedChapter(chap);
       } catch {
-        setNoteError("Failed to load notes. Please try again.");
+        console.error("Failed to fetch notes");
+      } finally {
+        setLoadingNotes(false);
+      }
+    };
+    fetchNotes();
+  }, [selectedChapterId, chapters]);
+
+  // ── Fetch single note when noteId in URL ──────────────────
+  useEffect(() => {
+    if (!selectedNoteId) return;
+    const fetchNote = async () => {
+      setLoadingNote(true);
+      try {
+        const { data } = await api.get(`/notes/${selectedNoteId}`);
+        setSelectedNote(data.data);
+      } catch {
+        console.error("Failed to fetch note");
       } finally {
         setLoadingNote(false);
       }
-    })();
-  }, [selectedChapter, isAdmin]);
+    };
+    fetchNote();
+  }, [selectedNoteId]);
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
-
-  /** Reset downstream selections when a panel item is picked */
-  const handleSelectClass = (cls: Class) => {
-    setSelectedClass(cls);
+  // ── Navigation helpers ─────────────────────────────────────
+  const selectClass = (classId: string) => {
+    setSearchParams({ classId });
+    setSubjects([]);
+    setChapters([]);
+    setNotes([]);
+    setSelectedNote(null);
+    setSelectedSubject(null);
+    setSelectedChapter(null);
   };
 
-  const handleSelectSubject = (sub: Subject) => {
-    setSelectedSubject(sub);
+  const selectSubject = (subjectId: string) => {
+    setSearchParams({ classId: selectedClassId!, subjectId });
+    setChapters([]);
+    setNotes([]);
+    setSelectedNote(null);
+    setSelectedChapter(null);
   };
 
-  const handleSelectChapter = (ch: Chapter) => {
-    setSelectedChapter(ch);
+  const selectChapter = (chapterId: string) => {
+    setSearchParams({
+      classId: selectedClassId!,
+      subjectId: selectedSubjectId!,
+      chapterId,
+    });
+    setNotes([]);
+    setSelectedNote(null);
   };
 
-  // ── Render ────────────────────────────────────────────────────────────────
-  return (
-    <div className="flex h-[calc(100vh-64px)] overflow-hidden bg-gray-50">
+  const selectNote = (noteId: string) => {
+    setSearchParams({
+      classId: selectedClassId!,
+      subjectId: selectedSubjectId!,
+      chapterId: selectedChapterId!,
+      noteId,
+    });
+  };
 
-      {/* ── Panel 1: Classes ──────────────────────────────────────────────── */}
-      <aside className="w-44 shrink-0 border-r border-gray-200 bg-white overflow-y-auto">
-        <div className="px-3 py-3 border-b border-gray-100">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-            Class
-          </p>
-        </div>
+  // ── Breadcrumb items ───────────────────────────────────────
+  const breadcrumbItems = [
+    {
+      label: "All Classes",
+      onClick: selectedClassId
+        ? () => setSearchParams({})
+        : undefined,
+    },
+    ...(selectedClass
+      ? [
+        {
+          label: selectedClass.name,
+          onClick: selectedSubjectId
+            ? () => selectClass(selectedClassId!)
+            : undefined,
+        },
+      ]
+      : []),
+    ...(selectedSubject
+      ? [
+        {
+          label: selectedSubject.name,
+          onClick: selectedChapterId
+            ? () => selectSubject(selectedSubjectId!)
+            : undefined,
+        },
+      ]
+      : []),
+    ...(selectedChapter
+      ? [
+        {
+          label: selectedChapter.name,
+          onClick: selectedNoteId
+            ? () => selectChapter(selectedChapterId!)
+            : undefined,
+        },
+      ]
+      : []),
+    ...(selectedNote ? [{ label: selectedNote.title }] : []),
+  ];
 
-        {loadingClasses ? (
-          <PanelSkeleton rows={5} />
-        ) : (
-          <ul className="py-1">
-            {classes.map((cls) => (
-              <li key={cls._id}>
-                <button
-                  onClick={() => handleSelectClass(cls)}
-                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedClass?._id === cls._id
-                      ? "bg-indigo-50 text-indigo-700 font-semibold border-r-2 border-indigo-600"
-                      : "text-gray-700 hover:bg-gray-50"
-                    }`}
-                >
-                  {cls.name}
-                </button>
-              </li>
+  // ─── Render Note Content ───────────────────────────────────
+  if (selectedNoteId) {
+    return (
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Breadcrumb items={breadcrumbItems} />
+        {loadingNote ? (
+          <div className="space-y-4">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} className="h-4 bg-gray-200 rounded animate-pulse" />
             ))}
-          </ul>
-        )}
-      </aside>
-
-      {/* ── Panel 2: Subjects ─────────────────────────────────────────────── */}
-      <aside className="w-48 shrink-0 border-r border-gray-200 bg-white overflow-y-auto">
-        <div className="px-3 py-3 border-b border-gray-100">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-            Subject
-          </p>
-        </div>
-
-        {!selectedClass ? (
-          <EmptyHint text="Select a class" />
-        ) : loadingSubjects ? (
-          <PanelSkeleton rows={4} />
-        ) : subjects.length === 0 ? (
-          <EmptyHint text="No subjects found" />
+          </div>
+        ) : selectedNote ? (
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 sm:p-10">
+            <h1 className="text-2xl font-bold text-gray-800 mb-6">
+              {selectedNote.title}
+            </h1>
+            {/* ── Markdown Renderer ─────────────────────────── */}
+            <div className="prose prose-indigo max-w-none">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {selectedNote.content}
+              </ReactMarkdown>
+            </div>
+          </div>
         ) : (
-          <ul className="py-1">
-            {subjects.map((sub) => (
-              <li key={sub._id}>
-                <button
-                  onClick={() => handleSelectSubject(sub)}
-                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center gap-2 ${selectedSubject?._id === sub._id
-                      ? "bg-indigo-50 text-indigo-700 font-semibold border-r-2 border-indigo-600"
-                      : "text-gray-700 hover:bg-gray-50"
-                    }`}
-                >
-                  {sub.icon && <span className="text-base">{sub.icon}</span>}
-                  <span className="truncate">{sub.name}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          <p className="text-gray-500">Note not found.</p>
         )}
-      </aside>
+      </div>
+    );
+  }
 
-      {/* ── Panel 3: Chapters ─────────────────────────────────────────────── */}
-      <aside className="w-56 shrink-0 border-r border-gray-200 bg-white overflow-y-auto">
-        <div className="px-3 py-3 border-b border-gray-100">
-          <p className="text-xs font-semibold text-gray-400 uppercase tracking-widest">
-            Chapter
-          </p>
-        </div>
+  // ─── Render Notes List ─────────────────────────────────────
+  if (selectedChapterId) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Breadcrumb items={breadcrumbItems} />
+        <h2 className="text-xl font-bold text-gray-800 mb-4">
+          Notes — {selectedChapter?.name}
+        </h2>
+        {loadingNotes ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+        ) : notes.length === 0 ? (
+          <div className="text-center py-16 text-gray-400">
+            <p className="text-4xl mb-3">📭</p>
+            <p>No notes published yet for this chapter.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {notes.map((note) => (
+              <button
+                key={note._id}
+                onClick={() => selectNote(note._id)}
+                className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md text-left transition-all"
+              >
+                <h3 className="font-semibold text-gray-800">{note.title}</h3>
+                <p className="text-xs text-gray-400 mt-2">
+                  {new Date(note.createdAt).toLocaleDateString("en-IN", {
+                    day: "numeric",
+                    month: "short",
+                    year: "numeric",
+                  })}
+                </p>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
-        {!selectedSubject ? (
-          <EmptyHint text="Select a subject" />
-        ) : loadingChapters ? (
-          <PanelSkeleton rows={4} />
+  // ─── Render Chapters List ──────────────────────────────────
+  if (selectedSubjectId) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Breadcrumb items={breadcrumbItems} />
+        <h2 className="text-xl font-bold text-gray-800 mb-4">
+          Chapters — {selectedSubject?.name}
+        </h2>
+        {loadingChapters ? (
+          <div className="space-y-3">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
         ) : chapters.length === 0 ? (
-          <EmptyHint text="No chapters found" />
+          <div className="text-center py-16 text-gray-400">
+            <p className="text-4xl mb-3">📭</p>
+            <p>No chapters published yet.</p>
+          </div>
         ) : (
-          <ul className="py-1">
-            {chapters.map((ch) => (
-              <li key={ch._id}>
-                <button
-                  onClick={() => handleSelectChapter(ch)}
-                  className={`w-full text-left px-4 py-2.5 text-sm transition-colors ${selectedChapter?._id === ch._id
-                      ? "bg-indigo-50 text-indigo-700 font-semibold border-r-2 border-indigo-600"
-                      : "text-gray-700 hover:bg-gray-50"
-                    }`}
-                >
-                  <span className="flex items-center justify-between gap-1">
-                    <span className="truncate">{ch.title}</span>
-                    {/* Show draft badge to admins/teachers */}
-                    {isAdmin && !ch.isPublished && (
-                      <span className="shrink-0 text-[10px] bg-amber-100 text-amber-700 rounded px-1 py-0.5 font-medium">
-                        Draft
-                      </span>
-                    )}
+          <div className="space-y-3">
+            {chapters.map((chapter) => (
+              <button
+                key={chapter._id}
+                onClick={() => selectChapter(chapter._id)}
+                className="w-full bg-white rounded-2xl p-5 shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md text-left transition-all flex items-center justify-between"
+              >
+                <div className="flex items-center gap-4">
+                  <span className="w-9 h-9 bg-indigo-50 text-indigo-600 rounded-xl flex items-center justify-center font-bold text-sm">
+                    {chapter.order}
                   </span>
-                </button>
-              </li>
+                  <div>
+                    <h3 className="font-semibold text-gray-800">
+                      {chapter.name}
+                    </h3>
+                    {chapter.description && (
+                      <p className="text-xs text-gray-400 mt-0.5">
+                        {chapter.description}
+                      </p>
+                    )}
+                  </div>
+                </div>
+                <span className="text-gray-300 text-xl">›</span>
+              </button>
             ))}
-          </ul>
+          </div>
         )}
-      </aside>
+      </div>
+    );
+  }
 
-      {/* ── Main Content: Note Viewer ─────────────────────────────────────── */}
-      <main className="flex-1 overflow-y-auto">
-        {!selectedChapter ? (
-          // Empty state — nothing selected yet
-          <div className="flex flex-col items-center justify-center h-full text-center px-8">
-            <div className="text-5xl mb-4">📖</div>
-            <h2 className="text-xl font-semibold text-gray-700 mb-1">
-              Select a chapter to view notes
-            </h2>
-            <p className="text-sm text-gray-400">
-              Use the panels on the left to drill down to a chapter.
-            </p>
+  // ─── Render Subjects List ──────────────────────────────────
+  if (selectedClassId) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <Breadcrumb items={breadcrumbItems} />
+        <h2 className="text-xl font-bold text-gray-800 mb-4">
+          Subjects — {selectedClass?.name}
+        </h2>
+        {loadingSubjects ? (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <SkeletonCard key={i} />
+            ))}
           </div>
-        ) : loadingNote ? (
-          <NoteLoadingSkeleton />
-        ) : noteError ? (
-          <div className="flex flex-col items-center justify-center h-full text-center px-8">
-            <div className="text-4xl mb-3">🗒️</div>
-            <p className="text-gray-500 text-sm">{noteError}</p>
+        ) : subjects.length === 0 ? (
+          <div className="text-center py-16 text-gray-400">
+            <p className="text-4xl mb-3">📭</p>
+            <p>No subjects available for this class yet.</p>
           </div>
-        ) : note ? (
-          <NoteViewer
-            note={note}
-            chapterTitle={selectedChapter.title}
-            subjectName={selectedSubject?.name ?? ""}
-            className={selectedClass?.name ?? ""}
-            isAdmin={isAdmin}
-          />
-        ) : null}
-      </main>
-    </div>
-  );
-}
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            {subjects.map((subject) => (
+              <button
+                key={subject._id}
+                onClick={() => selectSubject(subject._id)}
+                className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 hover:border-indigo-200 hover:shadow-md text-center transition-all"
+              >
+                <p className="text-4xl mb-2">{subject.icon}</p>
+                <h3 className="font-semibold text-gray-800">{subject.name}</h3>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
-// ─── Sub-components ───────────────────────────────────────────────────────────
-
-/** Rendered note with Markdown and header bar */
-function NoteViewer({
-  note,
-  chapterTitle,
-  subjectName,
-  className,
-  isAdmin,
-}: {
-  note: Note;
-  chapterTitle: string;
-  subjectName: string;
-  className: string;
-  isAdmin: boolean;
-}) {
+  // ─── Render Classes List (default view) ───────────────────
   return (
-    <div className="max-w-3xl mx-auto px-6 py-8">
-      {/* Breadcrumb */}
-      <p className="text-xs text-gray-400 mb-1 tracking-wide">
-        {className} &rsaquo; {subjectName} &rsaquo; {chapterTitle}
-      </p>
-
-      {/* Title row */}
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">{chapterTitle}</h1>
-
-        <div className="flex items-center gap-2 shrink-0">
-          {/* Draft badge for admins */}
-          {isAdmin && !note.isPublished && (
-            <span className="text-xs bg-amber-100 text-amber-700 rounded-full px-3 py-1 font-medium">
-              Draft
-            </span>
-          )}
-
-          {/* PDF Download — placeholder until Puppeteer backend is ready */}
-          <button
-            disabled
-            title="PDF download coming soon"
-            className="flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg border border-gray-200 text-gray-400 cursor-not-allowed select-none"
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              className="h-4 w-4"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={1.5}
-                d="M12 10v6m0 0l-3-3m3 3l3-3M3 17V7a2 2 0 012-2h6l2 2h4a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"
-              />
-            </svg>
-            Download PDF
-          </button>
+    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="mb-8">
+        <h1 className="text-2xl font-bold text-gray-800">Notes</h1>
+        <p className="text-gray-500 mt-1">
+          Select your class to browse notes
+        </p>
+      </div>
+      {loadingClasses ? (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div
+              key={i}
+              className="bg-gray-100 rounded-2xl h-24 animate-pulse"
+            />
+          ))}
         </div>
-      </div>
-
-      <hr className="border-gray-100 mb-8" />
-
-      {/* ── Markdown Content ──────────────────────────────────────────────── */}
-      <article className="prose prose-indigo prose-sm sm:prose max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-          {note.content}
-        </ReactMarkdown>
-      </article>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          {classes.map((cls) => (
+            <button
+              key={cls._id}
+              onClick={() => selectClass(cls._id)}
+              className="bg-white border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 rounded-2xl p-4 text-center transition-all shadow-sm group"
+            >
+              <p className="text-2xl font-bold text-indigo-600 group-hover:scale-110 transition-transform">
+                {cls.grade}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">{cls.name}</p>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
-}
+};
 
-/** Skeleton shimmer for sidebar panels */
-function PanelSkeleton({ rows }: { rows: number }) {
-  return (
-    <div className="py-2 px-3 space-y-2">
-      {Array.from({ length: rows }).map((_, i) => (
-        <div
-          key={i}
-          className="h-8 bg-gray-100 rounded animate-pulse"
-          style={{ opacity: 1 - i * 0.15 }}
-        />
-      ))}
-    </div>
-  );
-}
-
-/** Skeleton for note content area */
-function NoteLoadingSkeleton() {
-  return (
-    <div className="max-w-3xl mx-auto px-6 py-8 space-y-4 animate-pulse">
-      <div className="h-3 w-48 bg-gray-200 rounded" />
-      <div className="h-7 w-72 bg-gray-200 rounded" />
-      <div className="h-px bg-gray-100 my-6" />
-      <div className="space-y-3">
-        {[100, 90, 95, 70, 85, 60].map((w, i) => (
-          <div key={i} className={`h-4 bg-gray-100 rounded`} style={{ width: `${w}%` }} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-/** Subtle hint shown when a panel is waiting for upstream selection */
-function EmptyHint({ text }: { text: string }) {
-  return (
-    <div className="px-4 py-6 text-center">
-      <p className="text-xs text-gray-400 italic">{text}</p>
-    </div>
-  );
-}
+export default NotesPage;
