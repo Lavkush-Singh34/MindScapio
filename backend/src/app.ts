@@ -6,6 +6,13 @@ import authRoutes from "./routes/auth.routes";
 import { session } from "passport";
 import classRoutes from "./routes/class.routes";
 import quizRoutes from "./routes/quiz.routes";
+import subjectRoutes from "./routes/subject.routes";
+import chapterRoutes from "./routes/chapter.routes";
+import noteRoutes from "./routes/note.routes";
+import questionRoutes from "./routes/question.routes";
+import flashcardRoutes from "./routes/flashcard.routes";
+import testResultRoutes from "./routes/testResult.routes";
+import assignmentRoutes from "./routes/assignment.routes";
 
 const app: Application = express();
 
@@ -49,14 +56,14 @@ app.use("/api/quizzes", quizRoutes);
 
 // app.use("/api/auth", authRoutes);
 // app.use("/api/classes", classRoutes);
-// app.use("/api/subjects", subjectRoutes);
-// app.use("/api/chapters", chapterRoutes);
-// app.use("/api/notes", noteRoutes);
+app.use("/api/subjects", subjectRoutes);
+app.use("/api/chapters", chapterRoutes);
+app.use("/api/notes", noteRoutes);
 // app.use("/api/quizzes", quizRoutes);
-// app.use("/api/questions", questionRoutes);
-// app.use("/api/flashcards", flashcardRoutes);
-// app.use("/api/test-results", testResultRoutes);
-// app.use("/api/assignments", assignmentRoutes);
+app.use("/api/questions", questionRoutes);
+app.use("/api/flashcards", flashcardRoutes);
+app.use("/api/test-results", testResultRoutes);
+app.use("/api/assignments", assignmentRoutes);
 
 import { errorHandler } from "./middleware/error.middleware";
 

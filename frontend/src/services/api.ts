@@ -1,4 +1,8 @@
-import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+// import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
+// import type { ApiResponse } from "../types";
+
+import axios from "axios";
+import type { AxiosError, InternalAxiosRequestConfig } from "axios";
 import type { ApiResponse } from "../types";
 
 // ─── Base Axios Instance ───────────────────────────────────────
