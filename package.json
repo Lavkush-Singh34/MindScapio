@@ -1,0 +1,14 @@
+{
+  "name": "mindscapio",
+  "version": "1.0.0",
+  "description": "AI-powered tutoring platform",
+  "scripts": {
+    "dev": "concurrently --kill-others-on-fail --names \"backend,frontend\" --prefix-colors \"blue,green\" \"pnpm --filter backend dev\" \"pnpm --filter frontend dev\"",
+    "build": "concurrently \"pnpm --filter backend build\" \"pnpm --filter frontend build\"",
+    "dev:backend": "pnpm --filter backend dev",
+    "dev:frontend": "pnpm --filter frontend dev"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

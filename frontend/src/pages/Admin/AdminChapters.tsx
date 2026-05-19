@@ -1,88 +1,69 @@
-import { useEffect, useState } from "react";
+
+import { useEffect, useState, useCallback } from "react";
 import api from "../../services/api";
 import type { IClass, ISubject, IChapter } from "../../types";
 
-// ─── Chapter Form ──────────────────────────────────────────────
+// ─── Slide-over Chapter Form ───────────────────────────────────
 const ChapterForm = ({
   classes,
-  subjects,
-  onClassChange,
   initial,
   onSave,
-  onCancel,
+  onClose,
 }: {
   classes: IClass[];
-  subjects: ISubject[];
-  onClassChange: (classId: string) => void;
-  initial?: Partial<IChapter>;
-  onSave: (data: {
-    name: string;
-    slug: string;
-    order: number;
-    description: string;
-    subjectId: string;
-    classId: string;
-  }) => Promise<void>;
-  onCancel: () => void;
+  initial?: IChapter | null;
+  onSave: () => void;
+  onClose: () => void;
 }) => {
+  const [classId, setClassId] = useState(typeof initial?.classId === "object" ? initial.classId._id : initial?.classId ?? "");
+  const [subjectId, setSubjectId] = useState(typeof initial?.subjectId === "object" ? initial.subjectId._id : initial?.subjectId ?? "");
   const [name, setName] = useState(initial?.name ?? "");
-  const [slug, setSlug] = useState(initial?.slug ?? "");
-  const [order, setOrder] = useState(initial?.order ?? 1);
-  const [description, setDescription] = useState(initial?.description ?? "");
-  const [classId, setClassId] = useState(
-    typeof initial?.classId === "object"
-      ? initial.classId._id
-      : initial?.classId ?? ""
-  );
-  const [subjectId, setSubjectId] = useState(
-    typeof initial?.subjectId === "object"
-      ? initial.subjectId._id
-      : initial?.subjectId ?? ""
-  );
+  const [order, setOrder] = useState<number>(initial?.order ?? 1);
+
+  const [subjects, setSubjects] = useState<ISubject[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
 
-  // ── Auto generate slug from name ──────────────────────────
-  const handleNameChange = (value: string) => {
-    setName(value);
-    if (!initial?._id) {
-      setSlug(
-        value
-          .toLowerCase()
-          .trim()
-          .replace(/[^a-z0-9\s-]/g, "")
-          .replace(/\s+/g, "-")
-      );
-    }
-  };
+  // Fetch subjects when classId changes (new chapter flow)
+  useEffect(() => {
+    if (!classId) { setSubjects([]); return; }
+    api.get(`/subjects?classId=${classId}`)
+      .then(({ data }) => setSubjects(Array.isArray(data.data) ? data.data : []))
+      .catch(() => setSubjects([]));
+  }, [classId]);
 
-  // ── Handle class change ────────────────────────────────────
-  const handleClassChange = (value: string) => {
-    setClassId(value);
+  // On edit — pre-fetch subjects for the existing classId
+  useEffect(() => {
+    if (!initial) return;
+    const cid = typeof initial.classId === "object" ? initial.classId._id : initial.classId;
+    if (!cid) return;
+    api.get(`/subjects?classId=${cid}`)
+      .then(({ data }) => setSubjects(Array.isArray(data.data) ? data.data : []))
+      .catch(() => setSubjects([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleClassChange = (val: string) => {
+    setClassId(val);
     setSubjectId("");
-    onClassChange(value);
+    setError("");
   };
 
   const handleSave = async () => {
-    if (!name.trim()) { setError("Name is required"); return; }
-    if (!slug.trim()) { setError("Slug is required"); return; }
-    if (!classId) { setError("Please select a class"); return; }
-    if (!subjectId) { setError("Please select a subject"); return; }
-    if (!/^[a-z0-9-]+$/.test(slug)) {
-      setError("Slug can only contain lowercase letters, numbers and hyphens");
-      return;
-    }
+    if (!name.trim()) return setError("Name is required");
+    if (!classId) return setError("Select a class");
+    if (!subjectId) return setError("Select a subject");
+    if (!order || order < 1) return setError("Order must be at least 1");
     setIsSaving(true);
     setError("");
     try {
-      await onSave({
-        name: name.trim(),
-        slug,
-        order,
-        description: description.trim(),
-        subjectId,
-        classId,
-      });
+      const payload = { name: name.trim(), order, subjectId, classId };
+      if (initial?._id) {
+        await api.patch(`/chapters/${initial._id}`, payload);
+      } else {
+        await api.post("/chapters", payload);
+      }
+      onSave();
     } catch (err: any) {
       setError(err?.response?.data?.message ?? "Failed to save");
     } finally {
@@ -91,141 +72,129 @@ const ChapterForm = ({
   };
 
   return (
-    <div className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-6">
-      <h3 className="text-lg font-bold text-gray-800 mb-4">
-        {initial?._id ? "Edit Chapter" : "Create New Chapter"}
-      </h3>
+    <>
+      <div className="fixed inset-0 bg-black/30 backdrop-blur-sm z-40" onClick={onClose} />
 
-      <div className="space-y-4">
+      <div className="fixed top-0 right-0 h-full w-full max-w-md bg-white z-50 shadow-2xl flex flex-col">
 
-        {/* ── Class + Subject Row ───────────────────────────── */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 shrink-0">
           <div>
-            <label className="text-sm text-gray-600 mb-1 block">
-              Class <span className="text-red-400">*</span>
-            </label>
-            <select
-              value={classId}
-              onChange={(e) => handleClassChange(e.target.value)}
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-400 focus:outline-none text-gray-700"
-            >
-              <option value="">Select class</option>
-              {classes
-                .sort((a, b) => a.grade - b.grade)
-                .map((cls) => (
-                  <option key={cls._id} value={cls._id}>
-                    {cls.name}
-                  </option>
+            <h2 className="font-bold text-gray-900 text-lg">
+              {initial ? "Edit Chapter" : "New Chapter"}
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {initial ? "Update chapter details" : "Add a chapter to a subject"}
+            </p>
+          </div>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-500 transition-colors text-lg"
+          >
+            ×
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
+          {/* Class + Subject */}
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">
+                Class <span className="text-red-400">*</span>
+              </label>
+              <select
+                value={classId}
+                onChange={(e) => handleClassChange(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-gray-400 focus:outline-none text-gray-800 text-sm bg-gray-50"
+              >
+                <option value="">Pick class</option>
+                {classes.sort((a, b) => a.grade - b.grade).map((cls) => (
+                  <option key={cls._id} value={cls._id}>{cls.name}</option>
                 ))}
-            </select>
-          </div>
+              </select>
+            </div>
 
-          <div>
-            <label className="text-sm text-gray-600 mb-1 block">
-              Subject <span className="text-red-400">*</span>
-            </label>
-            <select
-              value={subjectId}
-              onChange={(e) => setSubjectId(e.target.value)}
-              disabled={!classId || subjects.length === 0}
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-400 focus:outline-none text-gray-700 disabled:bg-gray-50 disabled:text-gray-400"
-            >
-              <option value="">
-                {!classId
-                  ? "Select class first"
-                  : subjects.length === 0
-                    ? "No subjects found"
-                    : "Select subject"}
-              </option>
-              {subjects.map((sub) => (
-                <option key={sub._id} value={sub._id}>
-                  {sub.icon} {sub.name}
+            <div>
+              <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">
+                Subject <span className="text-red-400">*</span>
+              </label>
+              <select
+                value={subjectId}
+                onChange={(e) => { setSubjectId(e.target.value); setError(""); }}
+                disabled={!classId || subjects.length === 0}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 focus:border-gray-400 focus:outline-none text-gray-800 text-sm bg-gray-50 disabled:opacity-40"
+              >
+                <option value="">
+                  {!classId ? "—" : subjects.length === 0 ? "No subjects" : "Pick subject"}
                 </option>
-              ))}
-            </select>
+                {subjects.map((sub) => (
+                  <option key={sub._id} value={sub._id}>{sub.icon} {sub.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
-        </div>
 
-        {/* ── Name ───────────────────────────────────────────── */}
-        <div>
-          <label className="text-sm text-gray-600 mb-1 block">
-            Chapter Name <span className="text-red-400">*</span>
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => handleNameChange(e.target.value)}
-            placeholder="e.g. Chapter 1: The French Revolution"
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-400 focus:outline-none text-gray-700"
-          />
-        </div>
-
-        {/* ── Slug + Order Row ──────────────────────────────── */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-          <div className="sm:col-span-2">
-            <label className="text-sm text-gray-600 mb-1 block">
-              Slug <span className="text-red-400">*</span>
+          {/* Chapter Name */}
+          <div>
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">
+              Chapter Name <span className="text-red-400">*</span>
             </label>
             <input
               type="text"
-              value={slug}
-              onChange={(e) => setSlug(e.target.value.toLowerCase())}
-              placeholder="e.g. french-revolution"
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-400 focus:outline-none text-gray-700 font-mono text-sm"
+              value={name}
+              onChange={(e) => { setName(e.target.value); setError(""); }}
+              placeholder="e.g. The French Revolution"
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-gray-400 focus:outline-none text-gray-800 text-sm bg-gray-50"
             />
           </div>
+
+          {/* Order */}
           <div>
-            <label className="text-sm text-gray-600 mb-1 block">
+            <label className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-1.5 block">
               Order <span className="text-red-400">*</span>
             </label>
             <input
               type="number"
               value={order}
               min={1}
-              onChange={(e) => setOrder(Number(e.target.value))}
-              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-400 focus:outline-none text-gray-700"
+              onChange={(e) => { setOrder(Number(e.target.value)); setError(""); }}
+              className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-gray-400 focus:outline-none text-gray-800 text-sm bg-gray-50"
             />
+            <p className="text-xs text-gray-400 mt-1">Chapters are sorted by this number</p>
           </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-100 text-red-600 text-sm px-4 py-3 rounded-xl">
+              {error}
+            </div>
+          )}
         </div>
 
-        {/* ── Description ────────────────────────────────────── */}
-        <div>
-          <label className="text-sm text-gray-600 mb-1 block">
-            Description (optional)
-          </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Brief overview of this chapter"
-            rows={3}
-            className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-400 focus:outline-none text-gray-700 resize-none"
-          />
-        </div>
-
-        {error && <p className="text-red-500 text-sm">{error}</p>}
-
-        <div className="flex gap-3 pt-2">
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-gray-100 flex gap-3 shrink-0 bg-gray-50">
           <button
-            onClick={onCancel}
-            className="flex-1 py-3 rounded-xl bg-gray-100 text-gray-600 font-medium hover:bg-gray-200 transition-colors"
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl bg-white border border-gray-200 text-gray-600 font-medium text-sm hover:bg-gray-50 transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={handleSave}
             disabled={isSaving}
-            className="flex-1 py-3 rounded-xl bg-indigo-600 text-white font-medium hover:bg-indigo-700 transition-colors disabled:opacity-50"
+            className="flex-1 py-3 rounded-xl bg-gray-900 text-white font-medium text-sm hover:bg-gray-800 transition-colors disabled:opacity-50"
           >
-            {isSaving ? "Saving..." : initial?._id ? "Update" : "Create"}
+            {isSaving ? "Saving…" : initial ? "Update Chapter" : "Create Chapter"}
           </button>
         </div>
       </div>
-    </div>
+    </>
   );
 };
 
-// ─── Chapter Row ───────────────────────────────────────────────
-const ChapterRow = ({
+// ─── Chapter Card ──────────────────────────────────────────────
+const ChapterCard = ({
   chapter,
   onEdit,
   onDelete,
@@ -236,57 +205,54 @@ const ChapterRow = ({
   onDelete: () => void;
   onTogglePublish: () => void;
 }) => {
-  const subject =
-    typeof chapter.subjectId === "object" ? chapter.subjectId : null;
+  const subject = typeof chapter.subjectId === "object" ? chapter.subjectId : null;
 
   return (
-    <div className="bg-white rounded-2xl p-5 shadow-sm border border-gray-100 flex items-center justify-between gap-4 flex-wrap">
-      <div className="flex items-center gap-4">
-        {/* ── Order Badge ─────────────────────────────────────── */}
-        <div className="w-10 h-10 bg-indigo-50 rounded-xl flex items-center justify-center shrink-0">
-          <span className="font-bold text-indigo-600 text-sm">
-            {chapter.order}
-          </span>
+    <div className="group bg-white rounded-2xl border border-gray-100 hover:border-gray-200 hover:shadow-sm transition-all duration-200 overflow-hidden">
+      <div className="flex items-center gap-4 p-5">
+
+        {/* Order badge */}
+        <div className="w-10 h-10 rounded-xl bg-gray-900 text-white flex items-center justify-center text-sm font-bold shrink-0">
+          {chapter.order}
         </div>
-        <div>
-          <p className="font-semibold text-gray-800">{chapter.name}</p>
-          <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-            <span className="text-xs text-gray-400 font-mono">
-              {chapter.slug}
-            </span>
+
+        {/* Info */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <p className="font-semibold text-gray-900 truncate">{chapter.name}</p>
             {subject && (
-              <span className="text-xs bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-lg">
-                {subject.name}
+              <span className="text-xs bg-blue-50 text-blue-600 px-2 py-0.5 rounded-lg font-medium shrink-0">
+                {subject.icon} {subject.name}
               </span>
             )}
           </div>
         </div>
-      </div>
 
-      <div className="flex items-center gap-2 flex-wrap">
-        {/* ── Publish Toggle ──────────────────────────────────── */}
+        {/* Publish toggle */}
         <button
           onClick={onTogglePublish}
-          className={`text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${chapter.isPublished
-              ? "bg-green-50 text-green-600 border-green-200 hover:bg-green-100"
-              : "bg-yellow-50 text-yellow-600 border-yellow-200 hover:bg-yellow-100"
+          className={`shrink-0 text-xs px-3 py-1.5 rounded-lg border font-medium transition-all ${chapter.isPublished
+              ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-100"
+              : "bg-amber-50 text-amber-600 border-amber-200 hover:bg-amber-100"
             }`}
         >
-          {chapter.isPublished ? "✅ Published" : "📝 Draft"}
+          {chapter.isPublished ? "Live" : "Draft"}
         </button>
+      </div>
 
+      {/* Hover actions */}
+      <div className="flex border-t border-gray-50 bg-gray-50/50 divide-x divide-gray-100 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
           onClick={onEdit}
-          className="text-xs px-3 py-1.5 rounded-lg border border-gray-200 text-gray-600 hover:border-indigo-300 hover:text-indigo-600 transition-all"
+          className="flex-1 py-2 text-xs font-medium text-gray-600 hover:text-gray-900 hover:bg-gray-100 transition-colors"
         >
           ✏️ Edit
         </button>
-
         <button
           onClick={onDelete}
-          className="text-xs px-3 py-1.5 rounded-lg border border-red-100 text-red-500 hover:bg-red-50 transition-all"
+          className="flex-1 py-2 text-xs font-medium text-red-400 hover:text-red-600 hover:bg-red-50 transition-colors"
         >
-          🗑️ Delete
+          🗑 Delete
         </button>
       </div>
     </div>
@@ -297,230 +263,181 @@ const ChapterRow = ({
 const AdminChapters = () => {
   const [classes, setClasses] = useState<IClass[]>([]);
   const [subjects, setSubjects] = useState<ISubject[]>([]);
-  const [formSubjects, setFormSubjects] = useState<ISubject[]>([]);
   const [chapters, setChapters] = useState<IChapter[]>([]);
+
   const [filterClassId, setFilterClassId] = useState("");
   const [filterSubjectId, setFilterSubjectId] = useState("");
+
   const [isLoading, setIsLoading] = useState(false);
-  const [showForm, setShowForm] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
   const [editingChapter, setEditingChapter] = useState<IChapter | null>(null);
 
-  // ── Fetch classes on mount ─────────────────────────────────
+  // Fetch classes once
   useEffect(() => {
-    const fetchClasses = async () => {
-      try {
-        const { data } = await api.get("/classes");
-        setClasses(data.data);
-        if (data.data.length > 0) {
-          setFilterClassId(data.data[0]._id);
-        }
-      } catch {
-        console.error("Failed to fetch classes");
-      }
-    };
-    fetchClasses();
+    api.get("/classes")
+      .then(({ data }) => {
+        const list = Array.isArray(data.data) ? data.data : [];
+        setClasses(list);
+        if (list.length > 0) setFilterClassId(list[0]._id);
+      })
+      .catch(() => { });
   }, []);
 
-  // ── Fetch subjects when filter class changes ───────────────
+  // Fetch subjects when class filter changes
   useEffect(() => {
     if (!filterClassId) return;
-    const fetchSubjects = async () => {
-      try {
-        const { data } = await api.get(
-          `/subjects?classId=${filterClassId}`
-        );
-        setSubjects(data.data);
-        setFilterSubjectId(data.data[0]?._id ?? "");
-      } catch {
-        console.error("Failed to fetch subjects");
-      }
-    };
-    fetchSubjects();
+    api.get(`/subjects?classId=${filterClassId}`)
+      .then(({ data }) => {
+        const list = Array.isArray(data.data) ? data.data : [];
+        setSubjects(list);
+        setFilterSubjectId(list[0]?._id ?? "");
+      })
+      .catch(() => setSubjects([]));
   }, [filterClassId]);
 
-  // ── Fetch subjects for form when class changes ─────────────
-  const handleFormClassChange = async (classId: string) => {
-    try {
-      const { data } = await api.get(`/subjects?classId=${classId}`);
-      setFormSubjects(data.data);
-    } catch {
-      console.error("Failed to fetch subjects for form");
-    }
-  };
-
-  // ── Fetch chapters when subject filter changes ─────────────
-  const fetchChapters = async () => {
+  // Fetch chapters when subject filter changes
+  const fetchChapters = useCallback(async () => {
     if (!filterSubjectId) return;
     setIsLoading(true);
     try {
-      const { data } = await api.get(
-        `/chapters/admin?subjectId=${filterSubjectId}`
-      );
-      setChapters(data.data);
+      const { data } = await api.get(`/chapters/admin?subjectId=${filterSubjectId}`);
+      setChapters(Array.isArray(data.data) ? data.data : []);
     } catch {
       console.error("Failed to fetch chapters");
+      setChapters([]);
     } finally {
       setIsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    fetchChapters();
   }, [filterSubjectId]);
 
-  // ── Create ─────────────────────────────────────────────────
-  const handleCreate = async (formData: {
-    name: string;
-    slug: string;
-    order: number;
-    description: string;
-    subjectId: string;
-    classId: string;
-  }) => {
-    await api.post("/chapters", formData);
-    setShowForm(false);
-    fetchChapters();
-  };
+  useEffect(() => { fetchChapters(); }, [fetchChapters]);
 
-  // ── Update ─────────────────────────────────────────────────
-  const handleUpdate = async (formData: {
-    name: string;
-    slug: string;
-    order: number;
-    description: string;
-    subjectId: string;
-    classId: string;
-  }) => {
-    await api.patch(`/chapters/${editingChapter?._id}`, formData);
+  const handleSaved = () => {
+    setFormOpen(false);
     setEditingChapter(null);
     fetchChapters();
   };
 
-  // ── Toggle publish ─────────────────────────────────────────
   const handleTogglePublish = async (chapter: IChapter) => {
     await api.patch(`/chapters/${chapter._id}/publish`);
     fetchChapters();
   };
 
-  // ── Delete ─────────────────────────────────────────────────
   const handleDelete = async (chapter: IChapter) => {
-    if (!confirm(`Delete "${chapter.name}"?`)) return;
+    if (!confirm(`Delete "${chapter.name}"? Notes inside will also be removed.`)) return;
     await api.delete(`/chapters/${chapter._id}`);
     fetchChapters();
   };
 
+  const isFormOpen = formOpen || !!editingChapter;
+
   return (
     <div className="p-6 max-w-4xl mx-auto">
 
-      {/* ── Header ────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between mb-6">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-5">
         <div>
-          <h1 className="text-2xl font-bold text-gray-800">Chapters</h1>
-          <p className="text-gray-500 text-sm mt-1">
-            Manage chapters per subject
-          </p>
+          <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Chapters</h1>
+          <p className="text-gray-400 text-sm mt-0.5">Manage chapters per subject</p>
         </div>
-        {!showForm && !editingChapter && (
-          <button
-            onClick={() => setShowForm(true)}
-            className="bg-indigo-600 text-white px-5 py-2.5 rounded-xl text-sm font-medium hover:bg-indigo-700 transition-colors"
-          >
-            + New Chapter
-          </button>
+        <button
+          onClick={() => { setEditingChapter(null); setFormOpen(true); }}
+          className="bg-gray-900 text-white px-5 py-2.5 rounded-xl text-sm font-semibold hover:bg-gray-800 transition-colors"
+        >
+          + New Chapter
+        </button>
+      </div>
+
+      {/* Context filter bar */}
+      <div className="bg-white border border-gray-100 rounded-2xl px-5 py-4 mb-5 space-y-3">
+
+        {/* Class pills */}
+        <div>
+          <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">Class</p>
+          <div className="flex gap-1.5 flex-wrap">
+            {classes.sort((a, b) => a.grade - b.grade).map((cls) => (
+              <button
+                key={cls._id}
+                onClick={() => setFilterClassId(cls._id)}
+                className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${filterClassId === cls._id
+                    ? "bg-gray-900 text-white border-gray-900"
+                    : "bg-white text-gray-500 border-gray-200 hover:border-gray-400"
+                  }`}
+              >
+                {cls.name}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Subject pills */}
+        {subjects.length > 0 && (
+          <div>
+            <p className="text-[10px] font-bold text-gray-300 uppercase tracking-widest mb-2">Subject</p>
+            <div className="flex gap-1.5 flex-wrap">
+              {subjects.map((sub) => (
+                <button
+                  key={sub._id}
+                  onClick={() => setFilterSubjectId(sub._id)}
+                  className={`px-3 py-1 rounded-lg text-xs font-semibold border transition-all ${filterSubjectId === sub._id
+                      ? "bg-blue-600 text-white border-blue-600"
+                      : "bg-white text-gray-500 border-gray-200 hover:border-blue-300"
+                    }`}
+                >
+                  {sub.icon} {sub.name}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
 
-      {/* ── Forms ─────────────────────────────────────────────── */}
-      {showForm && (
-        <ChapterForm
-          classes={classes}
-          subjects={formSubjects}
-          onClassChange={handleFormClassChange}
-          onSave={handleCreate}
-          onCancel={() => setShowForm(false)}
-        />
-      )}
-
-      {editingChapter && (
-        <ChapterForm
-          classes={classes}
-          subjects={formSubjects.length > 0 ? formSubjects : subjects}
-          onClassChange={handleFormClassChange}
-          initial={editingChapter}
-          onSave={handleUpdate}
-          onCancel={() => setEditingChapter(null)}
-        />
-      )}
-
-      {/* ── Class Filter ──────────────────────────────────────── */}
-      <div className="flex gap-2 flex-wrap mb-3">
-        {classes
-          .sort((a, b) => a.grade - b.grade)
-          .map((cls) => (
-            <button
-              key={cls._id}
-              onClick={() => setFilterClassId(cls._id)}
-              className={`px-4 py-1.5 rounded-xl text-sm font-medium border transition-all ${filterClassId === cls._id
-                  ? "bg-indigo-600 text-white border-indigo-600"
-                  : "bg-white text-gray-600 border-gray-200 hover:border-indigo-300"
-                }`}
-            >
-              {cls.name}
-            </button>
-          ))}
-      </div>
-
-      {/* ── Subject Filter ────────────────────────────────────── */}
-      <div className="flex gap-2 flex-wrap mb-6">
-        {subjects.map((sub) => (
-          <button
-            key={sub._id}
-            onClick={() => setFilterSubjectId(sub._id)}
-            className={`px-4 py-1.5 rounded-xl text-sm font-medium border transition-all ${filterSubjectId === sub._id
-                ? "bg-purple-600 text-white border-purple-600"
-                : "bg-white text-gray-600 border-gray-200 hover:border-purple-300"
-              }`}
-          >
-            {sub.icon} {sub.name}
-          </button>
-        ))}
-      </div>
-
-      {/* ── Chapters List ─────────────────────────────────────── */}
+      {/* Chapters list */}
       {isLoading ? (
         <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, i) => (
-            <div
-              key={i}
-              className="bg-gray-100 rounded-2xl h-20 animate-pulse"
-            />
+          {[...Array(4)].map((_, i) => (
+            <div key={i} className="bg-gray-100 rounded-2xl h-20 animate-pulse" />
           ))}
         </div>
       ) : chapters.length === 0 ? (
-        <div className="text-center py-16 text-gray-400">
-          <p className="text-4xl mb-3">📖</p>
-          <p>No chapters yet for this subject.</p>
+        <div className="text-center py-20 text-gray-300">
+          <p className="text-5xl mb-3">📖</p>
+          <p className="text-sm font-medium">No chapters for this subject yet</p>
+          <button
+            onClick={() => { setEditingChapter(null); setFormOpen(true); }}
+            className="mt-4 text-sm text-gray-900 font-semibold underline underline-offset-2"
+          >
+            Create the first one →
+          </button>
         </div>
       ) : (
         <div className="space-y-3">
           {chapters
             .sort((a, b) => a.order - b.order)
             .map((chapter) => (
-              <ChapterRow
+              <ChapterCard
                 key={chapter._id}
                 chapter={chapter}
-                onEdit={() => {
-                  setShowForm(false);
-                  setEditingChapter(chapter);
-                }}
+                onEdit={() => { setFormOpen(false); setEditingChapter(chapter); }}
                 onDelete={() => handleDelete(chapter)}
                 onTogglePublish={() => handleTogglePublish(chapter)}
               />
             ))}
         </div>
       )}
+
+      {/* Slide-over form */}
+      {isFormOpen && (
+        <ChapterForm
+          classes={classes}
+          initial={editingChapter}
+          onSave={handleSaved}
+          onClose={() => { setFormOpen(false); setEditingChapter(null); }}
+        />
+      )}
     </div>
   );
 };
 
 export default AdminChapters;
+

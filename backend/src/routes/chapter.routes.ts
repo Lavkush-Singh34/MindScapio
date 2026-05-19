@@ -26,19 +26,10 @@ const createChapterSchema = z.object({
     .min(2, "Name must be at least 2 characters")
     .max(200, "Name too long")
     .trim(),
-  slug: z
-    .string()
-    .min(2, "Slug must be at least 2 characters")
-    .max(200, "Slug too long")
-    .trim()
-    .toLowerCase()
-    .regex(
-      /^[a-z0-9-]+$/,
-      "Slug can only contain lowercase letters, numbers and hyphens"
-    ),
-  order: z
-    .number()
-    .min(1, "Order must be at least 1"),
+  slug: z.string().min(2).max(200).trim().toLowerCase()
+    .regex(/^[a-z0-9-]+$/).optional(), order: z
+      .number()
+      .min(1, "Order must be at least 1"),
   description: z.string().max(500, "Description too long").trim().optional(),
   subjectId: z.string().min(1, "Subject ID is required"),
   classId: z.string().min(1, "Class ID is required"),

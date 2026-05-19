@@ -12,8 +12,8 @@ export const createChapter = async (
   next: NextFunction
 ): Promise<void> => {
   try {
-    const { name, slug, order, description, subjectId, classId } = req.body;
-
+    const { name, slug: rawSlug, order, description, subjectId, classId } = req.body;
+    const slug = rawSlug ?? name.toLowerCase().trim().replace(/[^a-z0-9\s-]/g, "").replace(/\s+/g, "-");
     // Verify parent subject exists and is active
     const parentSubject = await Subject.findOne({
       _id: subjectId,
